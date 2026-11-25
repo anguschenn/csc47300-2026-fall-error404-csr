@@ -7,27 +7,85 @@ interface AuthModalProps {
   onClose: () => void
 }
 
-export function AuthModal({ isOpen, onClose }: AuthModalProps) {
-  const { signInWithPassword, signUpWithPassword, signInWithGoogle } = useAuth()
-  const [isSignUp, setIsSignUp] = useState(false)
+type AuthMode = 'signin' | 'signup' | 'forgot' | 'update-password'
+
+function AuthModalContent({ onClose }: { onClose: () => void }) {
+  const {
+    signInWithPassword,
+    signUpWithPassword,
+    resetPasswordForEmail,
+    updatePassword,
+    isPasswordRecovery,
+    clearPasswordRecovery
+  } = useAuth()
+
+  const [mode, setMode] = useState<AuthMode>(() => (isPasswordRecovery ? 'update-password' : 'signin'))
   const [displayName, setDisplayName] = useState('')
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmNewPassword, setConfirmNewPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
-  if (!isOpen) return null
+  const handleClose = () => {
+    if (mode === 'update-password') {
+      clearPasswordRecovery()
+    }
+    setError(null)
+    setSuccessMessage(null)
+    onClose()
+  }
+
+  const validatePasswordSecurity = (pass: string): string | null => {
+    if (pass.length < 8) {
+      return 'Password must be at least 8 characters long.'
+    }
+    if (!/[A-Za-z]/.test(pass) || !/[0-9]/.test(pass)) {
+      return 'Password must contain at least one letter and one number.'
+    }
+    return null
+  }
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
     setSuccessMessage(null)
+
+    // 1. Password security & matching for registration
+    if (mode === 'signup') {
+      const securityError = validatePasswordSecurity(password)
+      if (securityError) {
+        setError(securityError)
+        return
+      }
+      if (password !== confirmPassword) {
+        setError('Passwords do not match. Please retype your password.')
+        return
+      }
+    }
+
+    // 2. Password security & matching for setting new password
+    if (mode === 'update-password') {
+      const securityError = validatePasswordSecurity(newPassword)
+      if (securityError) {
+        setError(securityError)
+        return
+      }
+      if (newPassword !== confirmNewPassword) {
+        setError('Passwords do not match. Please retype your password.')
+        return
+      }
+    }
+
     setLoading(true)
 
     try {
-      if (isSignUp) {
+      if (mode === 'signup') {
         const { error: signUpError, user } = await signUpWithPassword(
           email,
           password,
@@ -37,22 +95,38 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
         if (signUpError) {
           setError(signUpError.message)
         } else {
-          // Check if email confirmation is required by Supabase
           if (user && !user.confirmed_at && (!user.identities || user.identities.length === 0)) {
             setSuccessMessage('Registration successful! Please check your email to verify your account.')
           } else {
             setSuccessMessage('Account created successfully!')
             setTimeout(() => {
-              onClose()
+              handleClose()
             }, 1200)
           }
         }
-      } else {
+      } else if (mode === 'signin') {
         const { error: signInError } = await signInWithPassword(email, password)
         if (signInError) {
           setError(signInError.message)
         } else {
-          onClose()
+          handleClose()
+        }
+      } else if (mode === 'forgot') {
+        const { error: resetError } = await resetPasswordForEmail(email)
+        if (resetError) {
+          setError(resetError.message)
+        } else {
+          setSuccessMessage('Password reset link sent! Please check your email inbox.')
+        }
+      } else if (mode === 'update-password') {
+        const { error: updateError } = await updatePassword(newPassword)
+        if (updateError) {
+          setError(updateError.message)
+        } else {
+          setSuccessMessage('Password updated successfully! Redirecting...')
+          setTimeout(() => {
+            handleClose()
+          }, 1200)
         }
       }
     } catch (err: unknown) {
@@ -63,71 +137,46 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
     }
   }
 
-  const handleGoogleSignIn = async () => {
+  const switchMode = (newMode: AuthMode) => {
+    setMode(newMode)
     setError(null)
-    const { error: oauthError } = await signInWithGoogle()
-    if (oauthError) {
-      setError(oauthError.message)
-    }
+    setSuccessMessage(null)
+    setPassword('')
+    setConfirmPassword('')
+    setNewPassword('')
+    setConfirmNewPassword('')
   }
 
   return (
-    <div className="auth-modal-overlay" onClick={onClose}>
+    <div className="auth-modal-overlay" onClick={handleClose}>
       <div
         className="auth-modal-card"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
       >
-        <button className="auth-modal-close" onClick={onClose} aria-label="Close dialog">
+        <button className="auth-modal-close" onClick={handleClose} aria-label="Close dialog">
           ✕
         </button>
 
         <h2 className="auth-modal-title">
-          {isSignUp ? 'Create your MetroPulse account' : 'Welcome back'}
+          {mode === 'signup' && 'Create your MetroPulse account'}
+          {mode === 'signin' && 'Welcome back'}
+          {mode === 'forgot' && 'Reset your password'}
+          {mode === 'update-password' && 'Set a new password'}
         </h2>
         <p className="auth-modal-subtitle">
-          {isSignUp
-            ? 'Sign up to personalize station alerts and save your commutes.'
-            : 'Sign in to access your saved routes and commuter profile.'}
+          {mode === 'signup' && 'Sign up to personalize station alerts and save your commutes.'}
+          {mode === 'signin' && 'Sign in to access your saved routes and commuter profile.'}
+          {mode === 'forgot' && "Enter your account email and we'll send you a password reset link."}
+          {mode === 'update-password' && 'Enter a secure new password for your account below.'}
         </p>
 
         {error && <div className="auth-banner error">{error}</div>}
         {successMessage && <div className="auth-banner success">{successMessage}</div>}
 
-        <button
-          type="button"
-          className="google-btn"
-          onClick={handleGoogleSignIn}
-          disabled={loading}
-        >
-          <svg className="google-icon" viewBox="0 0 24 24" width="18" height="18">
-            <path
-              fill="#4285F4"
-              d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
-            />
-            <path
-              fill="#34A853"
-              d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
-            />
-            <path
-              fill="#FBBC05"
-              d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.17 0 9.99 0 12s.45 3.83 1.25 5.42l4.03-3.15z"
-            />
-            <path
-              fill="#EA4335"
-              d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-            />
-          </svg>
-          Continue with Google
-        </button>
-
-        <div className="auth-divider">
-          <span>or continue with email</span>
-        </div>
-
         <form onSubmit={handleSubmit} className="auth-form">
-          {isSignUp && (
+          {mode === 'signup' && (
             <>
               <div className="form-group">
                 <label htmlFor="auth-displayname">Display Name (Nickname / Handle)</label>
@@ -155,72 +204,216 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
             </>
           )}
 
-          <div className="form-group">
-            <label htmlFor="auth-email">Email</label>
-            <input
-              id="auth-email"
-              type="email"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              autoComplete="email"
-            />
-          </div>
+          {/* Email input shown on signin, signup, and forgot */}
+          {mode !== 'update-password' && (
+            <div className="form-group">
+              <label htmlFor="auth-email">Email</label>
+              <input
+                id="auth-email"
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoComplete="email"
+              />
+            </div>
+          )}
 
-          <div className="form-group">
-            <label htmlFor="auth-password">Password</label>
-            <input
-              id="auth-password"
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              minLength={6}
-              autoComplete={isSignUp ? 'new-password' : 'current-password'}
-            />
-          </div>
+          {/* Password for signin */}
+          {mode === 'signin' && (
+            <div className="form-group">
+              <div className="label-row">
+                <label htmlFor="auth-password">Password</label>
+                <button
+                  type="button"
+                  className="forgot-password-link"
+                  onClick={() => switchMode('forgot')}
+                >
+                  Forgot password?
+                </button>
+              </div>
+              <div className="password-input-wrapper">
+                <input
+                  id="auth-password"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Password + Confirm Password for signup */}
+          {mode === 'signup' && (
+            <>
+              <div className="form-group">
+                <label htmlFor="auth-password">Password</label>
+                <div className="password-input-wrapper">
+                  <input
+                    id="auth-password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                <span className="password-hint">
+                  Must be at least 8 characters with a letter and a number.
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="auth-confirm-password">Confirm Password</label>
+                <div className="password-input-wrapper">
+                  <input
+                    id="auth-confirm-password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Re-type your password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* New Password + Confirm for recovery */}
+          {mode === 'update-password' && (
+            <>
+              <div className="form-group">
+                <label htmlFor="auth-new-password">New Password</label>
+                <div className="password-input-wrapper">
+                  <input
+                    id="auth-new-password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                <span className="password-hint">
+                  Must be at least 8 characters with a letter and a number.
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="auth-confirm-new-password">Confirm New Password</label>
+                <div className="password-input-wrapper">
+                  <input
+                    id="auth-confirm-new-password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Re-type your new password"
+                    value={confirmNewPassword}
+                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                  />
+                </div>
+              </div>
+            </>
+          )}
 
           <button type="submit" className="submit-auth-btn" disabled={loading}>
-            {loading ? 'Please wait...' : isSignUp ? 'Create Account' : 'Sign In'}
+            {loading && 'Please wait...'}
+            {!loading && mode === 'signup' && 'Create Account'}
+            {!loading && mode === 'signin' && 'Sign In'}
+            {!loading && mode === 'forgot' && 'Send Reset Link'}
+            {!loading && mode === 'update-password' && 'Save New Password'}
           </button>
         </form>
 
         <div className="auth-switch">
-          {isSignUp ? (
+          {mode === 'signup' && (
             <span>
               Already have an account?{' '}
               <button
                 type="button"
                 className="switch-link"
-                onClick={() => {
-                  setIsSignUp(false)
-                  setError(null)
-                  setSuccessMessage(null)
-                }}
+                onClick={() => switchMode('signin')}
               >
                 Sign in
               </button>
             </span>
-          ) : (
+          )}
+
+          {mode === 'signin' && (
             <span>
               Don't have an account?{' '}
               <button
                 type="button"
                 className="switch-link"
-                onClick={() => {
-                  setIsSignUp(true)
-                  setError(null)
-                  setSuccessMessage(null)
-                }}
+                onClick={() => switchMode('signup')}
               >
                 Create one
+              </button>
+            </span>
+          )}
+
+          {mode === 'forgot' && (
+            <span>
+              Remembered your password?{' '}
+              <button
+                type="button"
+                className="switch-link"
+                onClick={() => switchMode('signin')}
+              >
+                Back to Sign in
               </button>
             </span>
           )}
         </div>
       </div>
     </div>
+  )
+}
+
+export function AuthModal({ isOpen, onClose }: AuthModalProps) {
+  const { isPasswordRecovery } = useAuth()
+
+  if (!isOpen) return null
+
+  return (
+    <AuthModalContent
+      key={isPasswordRecovery ? 'recovery' : 'normal'}
+      onClose={onClose}
+    />
   )
 }

@@ -22,7 +22,7 @@ def get_my_profile(
 ):
     """
     Returns the commuter profile for the authenticated user.
-    If the profile does not exist yet (e.g. first login via Google OAuth),
+    If the profile does not exist yet (e.g. a user created outside the app),
     it automatically provisions a default profile record.
     """
     profile = db.query(Profile).filter(Profile.id == current_user.id).first()

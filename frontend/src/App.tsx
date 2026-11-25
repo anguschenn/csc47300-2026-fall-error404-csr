@@ -1,14 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Routes, Route, useNavigate, useLocation, matchPath } from 'react-router-dom'
-import { NavLink } from 'react-router-dom'
+import { Routes, Route, useNavigate, useLocation, matchPath, Link, Navigate, type Location } from 'react-router-dom'
 import { RequireAuth } from './components/RequireAuth'
 import { SafeCommutePage } from './pages/SafeCommutePage'
 import { StationMap } from './components/StationMap'
 import { MovableMenu } from './components/MovableMenu'
 import { AuthModal } from './components/AuthModal'
-import { ProfileModal } from './components/ProfileModal'
 import { StationPage } from './pages/StationPage'
 import { ReportsPage } from './pages/ReportsPage'
+import { ProfileModalRoute } from './components/ProfileModal'
 import { useAuth } from './context/useAuth'
 import type { Station } from './types/station'
 import './App.css'
@@ -19,14 +18,24 @@ interface ConnectionStatus {
   message: string
 }
 
+function ProfileRedirect() {
+  const { user, loading } = useAuth()
+  const location = useLocation()
+  if (loading) return null
+  if (!user) return <Navigate to="/" replace />
+  return <Navigate to={`/profile/${user.id}`} replace state={location.state} />
+}
+
 function App() {
   const apiUrl = (import.meta.env.VITE_API_BASE_URL as string) || 'http://localhost:8000'
-  const { user, profile } = useAuth()
+  const { user, profile, isPasswordRecovery, clearPasswordRecovery } = useAuth()
   const navigate = useNavigate()
-  const { pathname } = useLocation()
-  const isMapPage = !matchPath('/reports', pathname)
-    && !matchPath('/safe-commute', pathname)
-    && !matchPath('/stations/:stationId', pathname)
+  const location = useLocation()
+  const backgroundLocation = (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation
+  const routeLocation = backgroundLocation ?? location
+  const isMapPage = !matchPath('/reports', routeLocation.pathname)
+    && !matchPath('/safe-commute', routeLocation.pathname)
+    && !matchPath('/stations/:stationId', routeLocation.pathname)
 
   const [status, setStatus] = useState<ConnectionStatus>({
     loading: true,
@@ -36,7 +45,6 @@ function App() {
   const [stations, setStations] = useState<Station[]>([])
   const [loadingStations, setLoadingStations] = useState(false)
   const [authModalOpen, setAuthModalOpen] = useState(false)
-  const [profileModalOpen, setProfileModalOpen] = useState(false)
 
   useEffect(() => {
     fetch(`${apiUrl}/api/health`)
@@ -103,9 +111,10 @@ function App() {
 
         <div className="header-actions">
           {user ? (
-            <button
+            <Link
               className="user-profile-btn"
-              onClick={() => setProfileModalOpen(true)}
+              to={`/profile/${user.id}`}
+              state={{ backgroundLocation: location }}
               title="Manage your profile & commute stations"
             >
               <div className="user-profile-avatar">
@@ -116,7 +125,7 @@ function App() {
                 )}
               </div>
               <span className="user-profile-name">{userDisplayName}</span>
-            </button>
+            </Link>
           ) : (
             <button className="sign-in-btn" onClick={() => setAuthModalOpen(true)}>
               Sign In
@@ -126,9 +135,29 @@ function App() {
       </header>
 
       <nav className="app-tabs" aria-label="Main navigation">
-        <NavLink to="/" end>Transit map</NavLink>
-        <NavLink to="/reports">Reports</NavLink>
-        {user && <NavLink to="/safe-commute">SafeCommute</NavLink>}
+        <Link
+          to="/"
+          className={routeLocation.pathname === '/' ? 'active' : undefined}
+          aria-current={routeLocation.pathname === '/' ? 'page' : undefined}
+        >
+          Transit map
+        </Link>
+        <Link
+          to="/reports"
+          className={routeLocation.pathname === '/reports' ? 'active' : undefined}
+          aria-current={routeLocation.pathname === '/reports' ? 'page' : undefined}
+        >
+          Reports
+        </Link>
+        {user && (
+          <Link
+            to="/safe-commute"
+            className={routeLocation.pathname === '/safe-commute' ? 'active' : undefined}
+            aria-current={routeLocation.pathname === '/safe-commute' ? 'page' : undefined}
+          >
+            SafeCommute
+          </Link>
+        )}
       </nav>
       {isMapPage && (
         <>
@@ -147,12 +176,13 @@ function App() {
                       {workStation.lines?.length ? ` (${workStation.lines.join(', ')})` : ''}
                     </span>
                   )}
-                  <button
+                  <Link
                     className="commute-edit-link"
-                    onClick={() => setProfileModalOpen(true)}
+                    to={`/profile/${user.id}`}
+                    state={{ backgroundLocation: location }}
                   >
                     Edit
-                  </button>
+                  </Link>
                 </div>
               )}
 
@@ -178,7 +208,8 @@ function App() {
       )}
       </MovableMenu>
 
-      <Routes>
+      {/* Background pages stay mounted while the profile modal is open. */}
+      <Routes location={routeLocation}>
         <Route path="/safe-commute" element={
           <RequireAuth><SafeCommutePage key={user?.id} stations={stations} /></RequireAuth>
         } />
@@ -196,11 +227,19 @@ function App() {
         />
       </Routes>
 
-      <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
-      <ProfileModal
-        isOpen={profileModalOpen}
-        onClose={() => setProfileModalOpen(false)}
-        stations={stations}
+      {/* The modal always follows the real location, never the background one. */}
+      <Routes>
+        <Route path="/profile" element={<ProfileRedirect />} />
+        <Route path="/profile/:userId" element={<ProfileModalRoute stations={stations} />} />
+        <Route path="*" element={null} />
+      </Routes>
+
+      <AuthModal
+        isOpen={authModalOpen || isPasswordRecovery}
+        onClose={() => {
+          setAuthModalOpen(false)
+          clearPasswordRecovery()
+        }}
       />
     </div>
   )

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { User, Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import type { Profile, ProfileUpdate } from '../types/profile'
@@ -11,46 +11,89 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
+  const [profileLoading, setProfileLoading] = useState(false)
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(() => {
+    return typeof window !== 'undefined' && window.location.hash.includes('type=recovery')
+  })
 
-  const fetchProfile = async (accessToken: string) => {
+  // Invalidates out-of-order profile responses and prevents the startup
+  // getSession() call and INITIAL_SESSION event from fetching twice.
+  const profileRequestRef = useRef(0)
+  const lastProfileTokenRef = useRef<string | null>(null)
+
+  const loadProfile = useCallback(async (accessToken: string, userId: string) => {
+    const requestId = ++profileRequestRef.current
+    setProfileLoading(true)
+
+    // Never render a profile belonging to a different account.
+    setProfile((current) => (current && current.id === userId ? current : null))
+
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/auth/profile`, {
         headers: {
           Authorization: `Bearer ${accessToken}`
         }
       })
+      if (requestId !== profileRequestRef.current) return
+
       if (res.ok) {
         const data: Profile = await res.json()
+        if (requestId !== profileRequestRef.current) return
         setProfile(data)
       } else {
         setProfile(null)
       }
     } catch (err) {
-      console.warn('Could not load profile from backend:', err)
-      setProfile(null)
+      if (requestId === profileRequestRef.current) {
+        console.warn('Could not load profile from backend:', err)
+        setProfile(null)
+      }
+    } finally {
+      if (requestId === profileRequestRef.current) {
+        setProfileLoading(false)
+      }
     }
-  }
+  }, [])
 
   useEffect(() => {
-    // 1. Check existing session on load
+    // 1. Restore an existing session on load.
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       setUser(session?.user ?? null)
+
       if (session?.access_token) {
-        fetchProfile(session.access_token).finally(() => setLoading(false))
-      } else {
-        setLoading(false)
+        // INITIAL_SESSION may have already handled this same token.
+        if (lastProfileTokenRef.current !== session.access_token) {
+          lastProfileTokenRef.current = session.access_token
+          loadProfile(session.access_token, session.user.id)
+        }
       }
+      setLoading(false)
     })
 
-    // 2. Subscribe to auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+    // 2. React to sign-in, sign-out, token refresh, etc.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, currentSession) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsPasswordRecovery(true)
+      }
       setSession(currentSession)
       setUser(currentSession?.user ?? null)
+
       if (currentSession?.access_token) {
-        fetchProfile(currentSession.access_token)
+        const alreadyHandled =
+          event === 'INITIAL_SESSION' &&
+          lastProfileTokenRef.current === currentSession.access_token
+
+        if (!alreadyHandled) {
+          lastProfileTokenRef.current = currentSession.access_token
+          loadProfile(currentSession.access_token, currentSession.user.id)
+        }
       } else {
+        // Invalidate any in-flight request so it cannot repopulate the profile.
+        profileRequestRef.current += 1
+        lastProfileTokenRef.current = null
         setProfile(null)
+        setProfileLoading(false)
       }
       setLoading(false)
     })
@@ -58,7 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       subscription.unsubscribe()
     }
-  }, [])
+  }, [loadProfile])
 
   const signInWithPassword = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
@@ -86,24 +129,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error, user: data.user }
   }
 
-  const signInWithGoogle = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin
-      }
-    })
-    return { error }
-  }
-
   const signOut = async () => {
     await supabase.auth.signOut()
+    profileRequestRef.current += 1
+    lastProfileTokenRef.current = null
     setProfile(null)
+    setProfileLoading(false)
   }
 
   const refreshProfile = async () => {
     if (session?.access_token) {
-      await fetchProfile(session.access_token)
+      await loadProfile(session.access_token, session.user.id)
     }
   }
 
@@ -131,7 +167,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const updatedProfile: Profile = await res.json()
+      // A profile read may still be in flight; make sure it cannot overwrite
+      // the freshly saved values with a stale response.
+      profileRequestRef.current += 1
       setProfile(updatedProfile)
+      setProfileLoading(false)
       return { error: null, profile: updatedProfile }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Network error'
@@ -178,6 +218,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const resetPasswordForEmail = async (email: string) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: typeof window !== 'undefined' ? `${window.location.origin}` : undefined
+    })
+    return { error }
+  }
+
+  const updatePassword = async (newPassword: string) => {
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword
+    })
+    if (!error) {
+      setIsPasswordRecovery(false)
+    }
+    return { error }
+  }
+
+  const clearPasswordRecovery = () => {
+    setIsPasswordRecovery(false)
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -185,13 +246,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         session,
         profile,
         loading,
+        profileLoading,
         signInWithPassword,
         signUpWithPassword,
-        signInWithGoogle,
         signOut,
         refreshProfile,
         updateProfile,
-        uploadAvatar
+        uploadAvatar,
+        resetPasswordForEmail,
+        updatePassword,
+        isPasswordRecovery,
+        clearPasswordRecovery
       }}
     >
       {children}

@@ -7,6 +7,7 @@ export interface AuthContextType {
   session: Session | null
   profile: Profile | null
   loading: boolean
+  profileLoading: boolean
   signInWithPassword: (email: string, password: string) => Promise<{ error: AuthError | null }>
   signUpWithPassword: (
     email: string,
@@ -14,11 +15,14 @@ export interface AuthContextType {
     displayName?: string,
     fullName?: string
   ) => Promise<{ error: AuthError | null; user: User | null }>
-  signInWithGoogle: () => Promise<{ error: AuthError | null }>
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
   updateProfile: (updates: ProfileUpdate) => Promise<{ error: string | null; profile: Profile | null }>
   uploadAvatar: (file: File) => Promise<{ error: string | null; url: string | null }>
+  resetPasswordForEmail: (email: string) => Promise<{ error: AuthError | null }>
+  updatePassword: (newPassword: string) => Promise<{ error: AuthError | null }>
+  isPasswordRecovery: boolean
+  clearPasswordRecovery: () => void
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined)

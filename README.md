@@ -28,7 +28,7 @@ By uniting operational transit feeds with community-driven collaboration, MetroP
 * Features an interactive transit map allowing users to browse stations, explore lines, and inspect live arrival boards.
 
 ### 2. User Accounts & Commute Profiles
-* Secure account registration and authentication (Email/Password or OAuth).
+* Secure account registration and authentication with email and password.
 * Personalized commuter dashboards where users can bookmark frequent stops, save daily travel routes, and configure route-specific alert notifications.
 * User profile badging to establish community trust and accountability across interaction boards.
 
@@ -59,8 +59,7 @@ By uniting operational transit feeds with community-driven collaboration, MetroP
 
 ### 2. User Accounts & Commute Profiles
 - **Secure Registration & Authentication:**
-  - Supports both email and password signup. 
-  - Supports Google Authentication(OAuth).
+  - Supports email and password signup.
 - **Personalized Commuter Dashboard**
   - Bookmarked MTA Stations
   - Saved Routes
@@ -73,7 +72,6 @@ By uniting operational transit feeds with community-driven collaboration, MetroP
 - **Data Ownership & Privacy**
   - Users can delete saved routes
   - Users can edit saved routes
-  - Users can revoke OAuth access
   - Users can control Profile Visibility 
 
 ### 3. "SafeCommute" Travel Coordination Hub
